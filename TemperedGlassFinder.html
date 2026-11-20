@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tempered Glass Finder</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f9fafb;
+      margin: 0;
+      padding: 15px;
+      color: #111827;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    h1 {
+      font-size: 22px;
+      margin-bottom: 10px;
+      text-align: center;
+      color: #1f2937;
+    }
+
+    p#status {
+      font-size: 14px;
+      margin-bottom: 15px;
+      text-align: center;
+      color: #6b7280;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+      min-width: 200px;
+    }
+
+    button {
+      padding: 12px 18px;
+      border: none;
+      border-radius: 6px;
+      background: #ef4444;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    button:hover {
+      background: #dc2626;
+    }
+
+    .result {
+      border: 1px solid #e5e7eb;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-size: 14px;
+      line-height: 1.4;
+      background: #fafafa;
+    }
+
+    .result strong {
+      color: #111827;
+    }
+
+    details summary {
+      cursor: pointer;
+      color: #2563eb;
+      font-size: 13px;
+      margin-top: 5px;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #6b7280;
+      text-align: center;
+    }
+
+    mark {
+      background: #fde68a;
+      padding: 0 2px;
+      border-radius: 2px;
+    }
+
+    @media (max-width: 600px) {
+      h1 { font-size: 20px; }
+      .container { padding: 15px; }
+      input[type="text"] { font-size: 13px; padding: 10px; }
+      button { font-size: 13px; padding: 10px 14px; }
+      .result { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Tempered Glass Finder 📱</h1>
+    <p id="status">Loading data...</p>
+    <div class="actions">
+      <input type="text" id="searchBox" placeholder="Type phone model (e.g., Redmi Note 10)" />
+      <button id="clearBtn">Clear</button>
+    </div>
+    <div id="results"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2"></script>
+
+  <script>
+    let rawEntries = [];
+    let fuse;
+
+    const sheetUrl = "https://docs.google.com/spreadsheets/d/15ABgyMm3bgzC7EVhaA3_zW_gsn8eLpAD/export?format=csv";
+    const proxy = "https://cors.isomorphic-git.org/";
+
+    async function loadFromGoogleSheet() {
+      try {
+        let res = await fetch(sheetUrl);
+        if (!res.ok) {
+          res = await fetch(proxy + sheetUrl);
+        }
+        const csvText = await res.text();
+        const parsed = Papa.parse(csvText, { skipEmptyLines: true }).data;
+
+        rawEntries = [];
+        for (let i = 1; i < parsed.length; i++) {
+          const row = parsed[i];
+          if (!row || row.length < 2) continue;
+          const id = String(row[0]).trim();
+          const modelsCell = String(row[1]).trim();
+          if (!id || !modelsCell) continue;
+          const models = modelsCell.split(/[,;|]+/).map(s => s.trim()).filter(Boolean);
+          rawEntries.push({ id, models });
+        }
+
+        let flattened = [];
+        rawEntries.forEach(entry => {
+          entry.models.forEach(m => {
+            flattened.push({ model: m, id: entry.id, fullModels: entry.models });
+          });
+        });
+
+        fuse = new Fuse(flattened, {
+          keys: ["model"],
+          threshold: 0.4,
+          ignoreLocation: true
+        });
+
+        document.getElementById("status").innerText =
+          `Loaded ${rawEntries.length} rows. Type a phone model to search.`;
+      } catch (err) {
+        console.error(err);
+        document.getElementById("status").innerText = "Error loading data.";
+      }
+    }
+
+    function escapeRegExp(string) {
+      return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    function highlight(text, query) {
+      if (!query) return text;
+      const escaped = escapeRegExp(query);
+      const re = new RegExp(`(${escaped})`, "gi");
+      return text.replace(re, "<mark>$1</mark>");
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function searchModels(query) {
+      const resultsDiv = document.getElementById("results");
+      resultsDiv.innerHTML = "";
+      if (!query || !fuse) return;
+
+      const fuseResults = fuse.search(query, { limit: 500, includeScore: true });
+
+      const grouped = {};
+      fuseResults.forEach(r => {
+        const item = r.item;
+        const score = typeof r.score === "number" ? r.score : 1;
+        if (!grouped[item.id]) {
+          grouped[item.id] = {
+            id: item.id,
+            matched: [item.model],
+            fullModels: item.fullModels.slice(),
+            bestScore: score
+          };
+        } else {
+          grouped[item.id].matched.push(item.model);
+          if (score < grouped[item.id].bestScore) grouped[item.id].bestScore = score;
+        }
+      });
+
+      const groups = Object.values(grouped).sort((a, b) => a.bestScore - b.bestScore);
+
+      if (groups.length === 0) {
+        resultsDiv.innerHTML = `<p class='small'>No matches found for "${escapeHtml(query)}"</p>`;
+        return;
+      }
+
+      groups.forEach(r => {
+        const div = document.createElement("div");
+        div.className = "result";
+        div.innerHTML = `<strong>Glass ID: ${escapeHtml(r.id)}</strong><br>
+          Matched: ${r.matched.map(m => highlight(escapeHtml(m), query)).join(", ")}<br>
+          <details><summary>Show all models</summary>${r.fullModels.map(m => highlight(escapeHtml(m), query)).join("<br>")}</details>`;
+        resultsDiv.appendChild(div);
+      });
+    }
+
+    function debounce(fn, delay) {
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn(...args), delay);
+      };
+    }
+
+    const debouncedSearch = debounce(query => searchModels(query), 200);
+
+    document.getElementById("searchBox").addEventListener("input", e => {
+      debouncedSearch(e.target.value.trim());
+    });
+
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      document.getElementById("searchBox").value = "";
+      document.getElementById("results").innerHTML = "";
+    });
+
+    loadFromGoogleSheet();
+  </script>
+</body>
+</html>
