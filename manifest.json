@@ -1,7 +1,7 @@
 {
   "name": "Tempered Glass Finder",
   "short_name": "Glass Finder",
-  "start_url": "./index.html",
+  "start_url": "./TemperedGlassFinder.html",
   "display": "standalone",
   "background_color": "#f9fafb",
   "theme_color": "#1f2937",
